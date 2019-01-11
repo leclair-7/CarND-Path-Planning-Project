@@ -8,6 +8,7 @@
 #include "Eigen-3.3/Eigen/Core"
 #include "Eigen-3.3/Eigen/QR"
 #include "json.hpp"
+#include "spline.h"
 
 using namespace std;
 
@@ -202,7 +203,10 @@ int main() {
   	map_waypoints_dy.push_back(d_y);
   }
 
-  h.onMessage([&map_waypoints_x,&map_waypoints_y,&map_waypoints_s,&map_waypoints_dx,&map_waypoints_dy](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
+  int lane = 1;
+  double ref_vel = 49.5;
+  
+  h.onMessage([&map_waypoints_x,&map_waypoints_y,&map_waypoints_s,&map_waypoints_dx,&map_waypoints_dy, &lane, &ref_vel](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
                      uWS::OpCode opCode) {
     // "42" at the start of the message means there's a websocket message event.
     // The 4 signifies a websocket message
@@ -221,6 +225,7 @@ int main() {
         if (event == "telemetry") {
           // j[1] is the data JSON object
           
+          // Under here are values           
         	// Main car's localization Data
           	double car_x = j[1]["x"];
           	double car_y = j[1]["y"];
@@ -235,9 +240,9 @@ int main() {
           	// Previous path's end s and d values 
           	double end_path_s = j[1]["end_path_s"];
           	double end_path_d = j[1]["end_path_d"];
-
           	// Sensor Fusion Data, a list of all other cars on the same side of the road.
           	auto sensor_fusion = j[1]["sensor_fusion"];
+
 
             if (lucas == 0){
               lucas=1;
@@ -247,63 +252,124 @@ int main() {
             }
           	json msgJson;
 
-          	vector<double> next_x_vals;
-          	vector<double> next_y_vals;
+          	
 
-              // we start 1.5 lanes from the waypoint which means 6m from waypoint
-             double dist_inc = 0.5;
-              for(int i = 0; i < 50; i++)
-              {
-                  double next_s = car_s + (i+1) * dist_inc; 
-                  double next_d = 6;
-                  vector<double> next_xy = getXY(next_s, next_d, map_waypoints_s, map_waypoints_x, map_waypoints_y);
-                  next_x_vals.push_back(next_xy[0]);
-                  next_y_vals.push_back(next_xy[1]);
-              }
-            // going straight
-             /*
-              */
-            // goes in circles
+            int prev_size = previous_path_x.size();
+
+            vector <double> ptsx;
+            vector <double> ptsy;
+
+            // reference x,y yaw status
+            double ref_x = car_x;
+            double ref_y = car_y;
+            double ref_yaw = deg2rad(car_yaw);
+            //double ref_vel = car_speed;
+
+            if (prev_size < 2){
+              double prev_car_x = car_x - cos(car_yaw);
+              double prev_car_y = car_y - sin(car_yaw);
+
+              ptsx.push_back(prev_car_x);
+              ptsx.push_back(car_x);
+              
+              ptsy.push_back(prev_car_y);
+              ptsy.push_back(car_y);
+            } else {
+
+              ref_x = previous_path_x[prev_size - 1];
+              ref_y = previous_path_y[prev_size - 1];
+
+              double ref_x_prev = previous_path_x[prev_size - 2];
+              double ref_y_prev = previous_path_y[prev_size - 2];
+              ref_yaw = atan2( (ref_y - ref_y_prev),(ref_x - ref_x_prev) );
+              
+              ptsx.push_back(ref_x_prev);
+              ptsx.push_back(ref_x);
+              
+              ptsy.push_back(ref_y_prev);
+              ptsy.push_back(ref_y);
+
+            }
+
+            /* instead of the 5m spacing, they're spaced more
+            .5 * .02 sec. ==> means .5m per .02sec?   
+            
+            We're on around 29:50
+
+            */
+
+            vector <double> next_wp0 = getXY( car_s + 30, (2 + 4 * lane),map_waypoints_s, map_waypoints_x, map_waypoints_y );
+            vector <double> next_wp1 = getXY( car_s + 60, (2 + 4 * lane),map_waypoints_s, map_waypoints_x, map_waypoints_y );
+            vector <double> next_wp2 = getXY( car_s + 90, (2 + 4 * lane),map_waypoints_s, map_waypoints_x, map_waypoints_y );
+
+            ptsx.push_back(next_wp0[0]);
+            ptsx.push_back(next_wp1[0]);
+            ptsx.push_back(next_wp2[0]);
+
+            ptsy.push_back(next_wp0[1]);
+            ptsy.push_back(next_wp1[1]);
+            ptsy.push_back(next_wp2[1]);
+
+            // ref_x is the previous x_position, basically .02 seconds ago
             /*
-          double pos_x;
-          double pos_y;
-          double angle;
-          int path_size = previous_path_x.size();
+                Coordinate transformation
+            */
+            for( int i=0;i<ptsx.size(); i++){
+              double shiftx = ptsx[i] - ref_x;
+              double shifty = ptsy[i] - ref_y;
 
-          for(int i = 0; i < path_size; i++)
-          {
-              next_x_vals.push_back(previous_path_x[i]);
-              next_y_vals.push_back(previous_path_y[i]);
-          }
+              ptsx[i] = (shiftx * cos(-1 * ref_yaw) - sin(-1 * ref_yaw) * shifty);
+              ptsy[i] = (shifty * cos(-1 * ref_yaw) + sin(-1 * ref_yaw) * shiftx);
 
-          if(path_size == 0)
-          {
-              pos_x = car_x;
-              pos_y = car_y;
-              angle = deg2rad(car_yaw);
-          }
-          else
-          {
-              pos_x = previous_path_x[path_size-1];
-              pos_y = previous_path_y[path_size-1];
+            }
 
-              double pos_x2 = previous_path_x[path_size-2];
-              double pos_y2 = previous_path_y[path_size-2];
-              angle = atan2(pos_y-pos_y2,pos_x-pos_x2);
-          }
+            // at this point we have 2 points behind current position and 30,60,90 ahead
+            tk::spline s;
 
-          double dist_inc = 0.5;
-          for(int i = 0; i < 50-path_size; i++)
-          {    
-              next_x_vals.push_back(pos_x+(dist_inc)*cos(angle+(i+1)*(pi()/100)));
-              next_y_vals.push_back(pos_y+(dist_inc)*sin(angle+(i+1)*(pi()/100)));
-              pos_x += (dist_inc)*cos(angle+(i+1)*(pi()/100));
-              pos_y += (dist_inc)*sin(angle+(i+1)*(pi()/100));
-          }
-          */
-
+            // think of ptsx and ptsy as anchor points (to smooth the curve?)
+            s.set_points(ptsx, ptsy);
+             
           	// TODO: define a path made up of (x,y) points that the car will visit sequentially every .02 seconds
-          	msgJson["next_x"] = next_x_vals;
+            vector<double> next_x_vals;
+            vector<double> next_y_vals;
+
+            for ( int i = 0; i < previous_path_x.size(); i++){
+                next_x_vals.push_back(previous_path_x[i]);
+                next_y_vals.push_back(previous_path_y[i]);
+            }
+
+            // code to make sure the car goes the right velocity
+            double target_x = 30.0;
+            double target_y = s(target_x);
+            double target_dist = sqrt( (target_x * target_x) + (target_y * target_y));
+
+            double x_add_on = 0;
+
+            for( int i = 1; i <= 50 - previous_path_x.size(); i++){
+
+              double N = (target_dist / (.02 * ref_vel/2.24));
+              double x_point = x_add_on + (target_x) / N ;
+              double y_point = s(x_point);
+
+              x_add_on = x_point;
+
+              double x_ref = x_point;
+              double y_ref = y_point;
+
+              x_point = (x_ref * cos( ref_yaw) - y_ref*sin(ref_yaw));
+              y_point = (x_ref * sin( ref_yaw) + y_ref*cos(ref_yaw));
+
+              x_point += ref_x;
+              y_point += ref_y;
+
+              next_x_vals.push_back(x_point);
+              next_y_vals.push_back(y_point);
+
+            }
+
+            //car eats up past points
+
+            msgJson["next_x"] = next_x_vals;
           	msgJson["next_y"] = next_y_vals;
 
           	auto msg = "42[\"control\","+ msgJson.dump()+"]";
