@@ -5,6 +5,7 @@
 #include <iostream>
 #include <thread>
 #include <vector>
+#include <typeinfo>
 #include "Eigen-3.3/Eigen/Core"
 #include "Eigen-3.3/Eigen/QR"
 #include "json.hpp"
@@ -204,9 +205,11 @@ int main() {
   }
 
   int lane = 1;
-  double ref_vel = 49.5;
+  double ref_vel = 0.0;
+  double spacing = .02;          
+            
   
-  h.onMessage([&map_waypoints_x,&map_waypoints_y,&map_waypoints_s,&map_waypoints_dx,&map_waypoints_dy, &lane, &ref_vel](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
+  h.onMessage([&map_waypoints_x,&map_waypoints_y,&map_waypoints_s,&map_waypoints_dx,&map_waypoints_dy, &lane, &ref_vel, &spacing](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
                      uWS::OpCode opCode) {
     // "42" at the start of the message means there's a websocket message event.
     // The 4 signifies a websocket message
@@ -241,20 +244,54 @@ int main() {
           	double end_path_s = j[1]["end_path_s"];
           	double end_path_d = j[1]["end_path_d"];
           	// Sensor Fusion Data, a list of all other cars on the same side of the road.
-          	auto sensor_fusion = j[1]["sensor_fusion"];
+          	vector <vector <double>> sensor_fusion = j[1]["sensor_fusion"];
 
-
+            
+            /*
             if (lucas == 0){
               lucas=1;
                for(int i = 0; i < sensor_fusion.size(); i++){
                   cout << sensor_fusion[i]<<endl;
                }
-            }
-          	json msgJson;
-
-          	
+            } 
+            */     	
 
             int prev_size = previous_path_x.size();
+
+            if (prev_size > 0){
+              car_s = end_path_s;
+            }
+
+            bool too_close = false;
+
+            for ( int i=0; i < sensor_fusion.size(); i++){
+              float d = sensor_fusion[i][0];
+
+              // is the car in our lane?
+              if(d < 2 + 4 * lane + 2 && d > 2 + 4 * lane - 2 ){
+                double vx = sensor_fusion[i][3];
+                double vy = sensor_fusion[i][4];
+                double check_speed = sqrt( vx*vx + vy*vy );
+                double check_car_s = sensor_fusion[i][5];
+
+                //if we're using previous points we can project the s out in time (next timestep)
+                check_car_s += ((double)prev_size * .02 * check_speed);
+
+                // is it in front of us such that we care
+                if (check_car_s > car_s && ((check_car_s - car_s)) < 30){
+                  too_close = true;
+                  //ref_vel = 29.5;
+                }
+              }
+            }
+
+            if(too_close){
+              ref_vel -= .224;
+            } else if( ref_vel < 49.5){
+              ref_vel += .224;
+            }
+
+
 
             vector <double> ptsx;
             vector <double> ptsy;
@@ -264,6 +301,8 @@ int main() {
             double ref_y = car_y;
             double ref_yaw = deg2rad(car_yaw);
             //double ref_vel = car_speed;
+
+            
 
             if (prev_size < 2){
               double prev_car_x = car_x - cos(car_yaw);
@@ -291,11 +330,10 @@ int main() {
 
             }
 
-            /* instead of the 5m spacing, they're spaced more
-            .5 * .02 sec. ==> means .5m per .02sec?   
-            
+            /* 
+            instead of the 5m spacing, they're spaced more
+            .5 * .02 sec. ==> means .5m per .02sec?             
             We're on around 29:50
-
             */
 
             vector <double> next_wp0 = getXY( car_s + 30, (2 + 4 * lane),map_waypoints_s, map_waypoints_x, map_waypoints_y );
@@ -339,15 +377,42 @@ int main() {
             }
 
             // code to make sure the car goes the right velocity
+
             double target_x = 30.0;
             double target_y = s(target_x);
             double target_dist = sqrt( (target_x * target_x) + (target_y * target_y));
-
             double x_add_on = 0;
+
+            /*
+              see if we're about to hit a car that's in front of us
+            */
+            /*
+            */      
+
+            //cout<< typeid(sensor_fusion[0]).name()<<endl;
+            //cout<< sensor_fusion[0][5]<<endl;
+            /*
+            double closest_dist = 6000.0;
+            int id_may_hit = 0;
+            for( int i =0; i < sensor_fusion.size();i++){
+                double car_curr_s = sensor_fusion[i][5];
+                if (car_curr_s - car_s> 0.0 && car_curr_s - car_s < closest_dist){
+                  closest_dist = car_curr_s - car_s;
+                  id_may_hit = i;
+                }
+            }
+
+            if(closest_dist < 10 && closest_dist > 0.0){
+              cout<< "Danger about to hit car " << id_may_hit << "\t" << closest_dist <<  endl;
+              //spacing += .005;
+            } else if (closest_dist > 10 && closest_dist > 0.0 && ref_vel >= .02){
+              //spacing -= .005;
+            }
+            */
 
             for( int i = 1; i <= 50 - previous_path_x.size(); i++){
 
-              double N = (target_dist / (.02 * ref_vel/2.24));
+              double N = (target_dist / (spacing * ref_vel/2.24));
               double x_point = x_add_on + (target_x) / N ;
               double y_point = s(x_point);
 
@@ -368,6 +433,7 @@ int main() {
             }
 
             //car eats up past points
+            json msgJson;    
 
             msgJson["next_x"] = next_x_vals;
           	msgJson["next_y"] = next_y_vals;
