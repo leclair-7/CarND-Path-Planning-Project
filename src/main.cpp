@@ -9,6 +9,7 @@
 #include <ctime>
 #include <typeinfo>
 
+#include "aux_path_plan.cpp"
 #include "Eigen-3.3/Eigen/Core"
 #include "Eigen-3.3/Eigen/QR"
 #include "json.hpp"
@@ -180,6 +181,102 @@ struct Position {
   double d;
 };
 
+
+vector <vector <Position>> putPositionInlane(vector<Position> closer_than_60){
+  vector <vector <Position>> lanes1_to_3;
+
+  vector <Position>lane0;
+  vector <Position>lane1;
+  vector <Position>lane2;
+
+  double d;
+  for(int i=0; i < closer_than_60.size(); i++){
+
+    d = closer_than_60[i].d;
+
+    if (d > 1.0 && d < 3.0){  
+      lane0.push_back(closer_than_60[i]);
+    }
+    // are they in lane 1
+     else if (d > 5.0 && d < 7.0){      
+      lane1.push_back(closer_than_60[i]);
+    }
+    // are they in lane 2
+    else if (d > 9.0 && d < 11.0){
+      lane2.push_back(closer_than_60[i]);
+    }
+  }
+
+  lanes1_to_3.push_back(lane0);
+  lanes1_to_3.push_back(lane1);
+  lanes1_to_3.push_back(lane2);
+
+  return lanes1_to_3;
+}
+
+bool isLaneSafe(vector<Position>alane, Position car_pos){
+
+    double car_vel = car_pos.vel;
+    double car_s   = car_pos.s;
+    bool flag = true;
+
+    for(int i=0; i < alane.size(); i++){
+      // behind and faster
+      if( (alane[i].s < car_s) && alane[i].vel > car_vel ){  
+        flag = false;      
+      } 
+      
+      //in front and slower
+      if( (alane[i].s > car_s) && alane[i].vel < car_vel ){
+        flag = false;         
+      } 
+    }
+
+    return flag;
+}
+
+/*
+  In each lane shift option, we'll define whether or not it is safe explicitly prior to running this functions
+  to be on the safe side, isleftsafe and isrightsafe both start false
+*/
+void laneShiftProcessing(int lane, bool & isleftsafe, bool & isrightsafe, vector<Position> closer_than_60, Position car_pos) {
+  // make positions lane 0,1,2 vectors
+  // 
+  vector <vector <Position>> allLanePositions = putPositionInlane(closer_than_60); 
+  vector <Position>lane0 = allLanePositions[0];
+  vector <Position>lane1 = allLanePositions[1];
+  vector <Position>lane2 = allLanePositions[2];
+
+  double car_vel = car_pos.vel;
+  double car_s   = car_pos.s;
+
+  bool flag  = false; 
+  bool flag2 = false;
+
+  if (lane == 0){
+    isleftsafe = false;
+    // calculate if lane1 is safe
+    flag = isLaneSafe(lane1, car_pos);
+
+    if (flag){ isrightsafe = true; }
+
+    // see if there's a car in front within 60 going slower or behind us within x going faster  
+  } else if (lane == 1){
+    // calculate if lane0 and lane2 is safe
+    flag  = isLaneSafe(lane0, car_pos);
+    flag2 = isLaneSafe(lane2, car_pos);
+
+    if (flag)  isleftsafe = true;
+    if (flag2) isrightsafe = true;
+  } else if (lane == 2){
+    isrightsafe = false;
+    // calculate if lane1 is safe
+    flag  = isLaneSafe(lane1, car_pos);
+    if (flag)  isleftsafe = true;
+  }
+
+}
+
 int main() {
   uWS::Hub h;
 
@@ -201,7 +298,7 @@ int main() {
 
   long long start = 0; 
   int lane = 1;
-  double ref_vel = 40.0;
+  double ref_vel = 0.0;
   double spacing = .02;         
      
   bool firstlanechange = false;  
@@ -255,6 +352,14 @@ int main() {
           	double car_yaw = j[1]["yaw"];
           	double car_speed = j[1]["speed"];
 
+            Position car_pos;
+            car_pos.id = 42;
+            car_pos.x = car_x;
+            car_pos.y = car_y;
+            car_pos.vel = car_speed;
+            car_pos.s = car_s;
+            car_pos.d = car_d;
+
           	// Previous path data given to the Planner
           	auto previous_path_x = j[1]["previous_path_x"];
           	auto previous_path_y = j[1]["previous_path_y"];
@@ -267,7 +372,6 @@ int main() {
             /* Some analysis
                     Goal here is to get a list of the vehicles within 60m of us
                     Wait, how close are they and how fast are they going for path planning we assume 0 accel on their part
-
              */
             vector<Position> closer_than_60;
             for( int i=0; i < sensor_fusion.size(); i++){
@@ -277,30 +381,15 @@ int main() {
                 p.x   = sensor_fusion[i][1];
                 p.y   = sensor_fusion[i][2];
                 p.vel = sqrt(sensor_fusion[i][3] * sensor_fusion[i][3] + sensor_fusion[i][4] * sensor_fusion[i][4] );              
-
+                p.d = sensor_fusion[i][6];
                 double dist_to_us = distance(p.x, p.y, car_x, car_y);
                 if (dist_to_us < 40){
                   closer_than_60.push_back(p);
-                }                  
+                } 
+                //cout<< "d of car id="<<p.id << " is " << p.d << endl;                 
             }
 
-            /*
-            cout<<endl;
-            cout<< "Vehicles in proximity of behavior consideration: (we are at:" << car_x << " " << car_y << " " << car_s << ")" << endl;
-            for( int i=0; i < closer_than_60.size(); i++){
-              cout<< "Car id: "<<closer_than_60[i].id << "\tx," << closer_than_60[i].x << "\ty," << closer_than_60[i].y <<endl;
-            }
-            cout<<endl;
-            */
-
-            /*
-            if (lucas == 0){
-              lucas=1;
-               for(int i = 0; i < sensor_fusion.size(); i++){
-                  cout << sensor_fusion[i]<<endl;
-               }
-            } 
-            */     	
+             	
 
             int prev_size = previous_path_x.size();
 
@@ -312,9 +401,16 @@ int main() {
               Below we check if we are too close to the car in front of us
             */
             bool too_close = false;
+            start += 1;
+
+            //https://stackoverflow.com/questions/1819189/what-range-of-values-can-integer-types-store-in-c
+            // yeah probably won't get an overflow; however, we never want one
+            if(start > 100000000) start -= 10000000;
+            bool is_left_shift_safe  = false;
+            bool is_right_shift_safe = false;
 
             // this checks if the car is in our lane, and if so will it be too close with 30 meters of us
-            start += 1;
+            // input: (vector <vector <double>>sensorfusion, int prev_size, int & lane, long long & start)  
             for ( int i=0; i < sensor_fusion.size(); i++){
               float d = sensor_fusion[i][6];
 
@@ -331,29 +427,64 @@ int main() {
                 // is it in front of us such that we care
                 if (check_car_s > car_s && ((check_car_s - car_s)) < 30){
                   //too_close = true; 
-                  cout<< lane << "start: "<< start << endl;
+
+                  //cout<< lane << "start: "<< start << endl;
+                  // at this point, know we're almost in danger need to change lanes or slow down
                   
-                  if (lane == 1 && (!firstlanechange || start > 70) ){
-                  firstlanechange = true;
+                  //the logic  (1st 3 ifs) we want to do is try to do then lane change, and if neither are safe
+                  // then we'll decelerate until either it is safe to change lanes or to keep in lane
+
+                  laneShiftProcessing( lane, is_left_shift_safe, is_right_shift_safe, closer_than_60, car_pos );
+
+                  // Caution below
+                  if (lane == 1 && (!firstlanechange || start > 70) && is_right_shift_safe){
+                    
+                    firstlanechange = true;
+
+                    //decide if lane 0 or lane 2 is safer then do the safer one
                     lane = 2;                    
                     start = 0;
-                  } else if (lane == 2 && start > 70){
+                  } else if (lane == 1 && (!firstlanechange || start > 35) && is_left_shift_safe){
+                    //decide if safe to change into lane 1
+                    firstlanechange = true;
+                    lane = 0;
+                    start = 0;
+                    //cout << "Got here variables not modified\n";
+                  }else if (lane == 2 && start > 35 && is_left_shift_safe){
+                    //decide if safe to change into lane 1
                     lane = 1;
                     start = 0;
-                    cout << "Got here variables not modified\n";
-                  }   
+                    //cout << "Got here variables not modified\n";
+                  } else if (lane == 0 && start > 35 && is_right_shift_safe){
+                    //decide if safe to change into lane 1 (middle)
+                    lane = 1;
+                    start = 0;
+                    //cout << "Got here variables not modified\n";
+                  }  else{
+                    // if we're going faster than them
+                    if(car_speed > check_speed){
+                      ref_vel -= .7;                    
+                    } 
+                    /*
+                    else if( ref_vel < 49.5){
+                      ref_vel += .224;
+                    }
+                    */
+                  }
                   //cout << lane << endl; 
                 }
-              }
-            }
-            cout<< "start  "<< start << "\t" << lane << endl;
+              }//ends if car is in our lane
 
-            if(too_close){
+            }
+            //cout<< "start  "<< start << "\t" << lane << endl;
+
+            if(ref_vel > 49.5){
               ref_vel -= .224;
              // cout<< "Decelerationg "<< lane << endl;
             } else if( ref_vel < 49.5){
               ref_vel += .224;
             }
+            
 
             vector <double> ptsx;
             vector <double> ptsy;
