@@ -1,0 +1,4 @@
+
+
+sensor_fusion gets the following for other cars on the map: [ id, x, y, vx, vy, s, d]
+so basically double vectors

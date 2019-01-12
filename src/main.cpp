@@ -5,7 +5,10 @@
 #include <iostream>
 #include <thread>
 #include <vector>
+#include <cstdio>
+#include <ctime>
 #include <typeinfo>
+
 #include "Eigen-3.3/Eigen/Core"
 #include "Eigen-3.3/Eigen/QR"
 #include "json.hpp"
@@ -167,6 +170,16 @@ vector<double> getXY(double s, double d, const vector<double> &maps_s, const vec
 
 int lucas = 0;
 
+struct Position {
+  int id;
+  double x;
+  double y;
+  double vel;
+
+  double s;
+  double d;
+};
+
 int main() {
   uWS::Hub h;
 
@@ -185,6 +198,14 @@ int main() {
   ifstream in_map_(map_file_.c_str(), ifstream::in);
 
   string line;
+
+  long long start = 0; 
+  int lane = 1;
+  double ref_vel = 40.0;
+  double spacing = .02;         
+     
+  bool firstlanechange = false;  
+
   while (getline(in_map_, line)) {
   	istringstream iss(line);
   	double x;
@@ -204,12 +225,9 @@ int main() {
   	map_waypoints_dy.push_back(d_y);
   }
 
-  int lane = 1;
-  double ref_vel = 0.0;
-  double spacing = .02;          
-            
+   
   
-  h.onMessage([&map_waypoints_x,&map_waypoints_y,&map_waypoints_s,&map_waypoints_dx,&map_waypoints_dy, &lane, &ref_vel, &spacing](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
+  h.onMessage([&firstlanechange, &start, &map_waypoints_x,&map_waypoints_y,&map_waypoints_s,&map_waypoints_dx,&map_waypoints_dy, &lane, &ref_vel, &spacing](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
                      uWS::OpCode opCode) {
     // "42" at the start of the message means there's a websocket message event.
     // The 4 signifies a websocket message
@@ -229,7 +247,7 @@ int main() {
           // j[1] is the data JSON object
           
           // Under here are values           
-        	// Main car's localization Data
+        	// My car's localization Data
           	double car_x = j[1]["x"];
           	double car_y = j[1]["y"];
           	double car_s = j[1]["s"];
@@ -246,7 +264,35 @@ int main() {
           	// Sensor Fusion Data, a list of all other cars on the same side of the road.
           	vector <vector <double>> sensor_fusion = j[1]["sensor_fusion"];
 
-            
+            /* Some analysis
+                    Goal here is to get a list of the vehicles within 60m of us
+                    Wait, how close are they and how fast are they going for path planning we assume 0 accel on their part
+
+             */
+            vector<Position> closer_than_60;
+            for( int i=0; i < sensor_fusion.size(); i++){
+                
+                Position p;
+                p.id  = sensor_fusion[i][0];
+                p.x   = sensor_fusion[i][1];
+                p.y   = sensor_fusion[i][2];
+                p.vel = sqrt(sensor_fusion[i][3] * sensor_fusion[i][3] + sensor_fusion[i][4] * sensor_fusion[i][4] );              
+
+                double dist_to_us = distance(p.x, p.y, car_x, car_y);
+                if (dist_to_us < 40){
+                  closer_than_60.push_back(p);
+                }                  
+            }
+
+            /*
+            cout<<endl;
+            cout<< "Vehicles in proximity of behavior consideration: (we are at:" << car_x << " " << car_y << " " << car_s << ")" << endl;
+            for( int i=0; i < closer_than_60.size(); i++){
+              cout<< "Car id: "<<closer_than_60[i].id << "\tx," << closer_than_60[i].x << "\ty," << closer_than_60[i].y <<endl;
+            }
+            cout<<endl;
+            */
+
             /*
             if (lucas == 0){
               lucas=1;
@@ -262,10 +308,15 @@ int main() {
               car_s = end_path_s;
             }
 
+            /*
+              Below we check if we are too close to the car in front of us
+            */
             bool too_close = false;
 
+            // this checks if the car is in our lane, and if so will it be too close with 30 meters of us
+            start += 1;
             for ( int i=0; i < sensor_fusion.size(); i++){
-              float d = sensor_fusion[i][0];
+              float d = sensor_fusion[i][6];
 
               // is the car in our lane?
               if(d < 2 + 4 * lane + 2 && d > 2 + 4 * lane - 2 ){
@@ -279,19 +330,30 @@ int main() {
 
                 // is it in front of us such that we care
                 if (check_car_s > car_s && ((check_car_s - car_s)) < 30){
-                  too_close = true;
-                  //ref_vel = 29.5;
+                  //too_close = true; 
+                  cout<< lane << "start: "<< start << endl;
+                  
+                  if (lane == 1 && (!firstlanechange || start > 70) ){
+                  firstlanechange = true;
+                    lane = 2;                    
+                    start = 0;
+                  } else if (lane == 2 && start > 70){
+                    lane = 1;
+                    start = 0;
+                    cout << "Got here variables not modified\n";
+                  }   
+                  //cout << lane << endl; 
                 }
               }
             }
+            cout<< "start  "<< start << "\t" << lane << endl;
 
             if(too_close){
               ref_vel -= .224;
+             // cout<< "Decelerationg "<< lane << endl;
             } else if( ref_vel < 49.5){
               ref_vel += .224;
             }
-
-
 
             vector <double> ptsx;
             vector <double> ptsy;
@@ -300,11 +362,10 @@ int main() {
             double ref_x = car_x;
             double ref_y = car_y;
             double ref_yaw = deg2rad(car_yaw);
-            //double ref_vel = car_speed;
+            //double ref_vel = car_speed;            
+            bool more_than_3_prev = false;
 
-            
-
-            if (prev_size < 2){
+            if (prev_size < 3){
               double prev_car_x = car_x - cos(car_yaw);
               double prev_car_y = car_y - sin(car_yaw);
 
@@ -315,6 +376,8 @@ int main() {
               ptsy.push_back(car_y);
             } else {
 
+              more_than_3_prev = true;
+              //cout<< "had 2 or more prev_points" << prev_size << endl;
               ref_x = previous_path_x[prev_size - 1];
               ref_y = previous_path_y[prev_size - 1];
 
@@ -336,9 +399,9 @@ int main() {
             We're on around 29:50
             */
 
-            vector <double> next_wp0 = getXY( car_s + 30, (2 + 4 * lane),map_waypoints_s, map_waypoints_x, map_waypoints_y );
-            vector <double> next_wp1 = getXY( car_s + 60, (2 + 4 * lane),map_waypoints_s, map_waypoints_x, map_waypoints_y );
-            vector <double> next_wp2 = getXY( car_s + 90, (2 + 4 * lane),map_waypoints_s, map_waypoints_x, map_waypoints_y );
+            vector <double> next_wp0 = getXY( car_s + 30, (2 + 4 * lane), map_waypoints_s, map_waypoints_x, map_waypoints_y );
+            vector <double> next_wp1 = getXY( car_s + 60, (2 + 4 * lane), map_waypoints_s, map_waypoints_x, map_waypoints_y );
+            vector <double> next_wp2 = getXY( car_s + 90, (2 + 4 * lane), map_waypoints_s, map_waypoints_x, map_waypoints_y );
 
             ptsx.push_back(next_wp0[0]);
             ptsx.push_back(next_wp1[0]);
@@ -352,7 +415,7 @@ int main() {
             /*
                 Coordinate transformation
             */
-            for( int i=0;i<ptsx.size(); i++){
+            for( int i=0;i<ptsx.size(); i++){              
               double shiftx = ptsx[i] - ref_x;
               double shifty = ptsy[i] - ref_y;
 
@@ -364,7 +427,8 @@ int main() {
             // at this point we have 2 points behind current position and 30,60,90 ahead
             tk::spline s;
 
-            // think of ptsx and ptsy as anchor points (to smooth the curve?)
+            // think of ptsx and ptsy as anchor points (to smooth the curve?),
+            // anchor points around which points made
             s.set_points(ptsx, ptsy);
              
           	// TODO: define a path made up of (x,y) points that the car will visit sequentially every .02 seconds
@@ -381,34 +445,7 @@ int main() {
             double target_x = 30.0;
             double target_y = s(target_x);
             double target_dist = sqrt( (target_x * target_x) + (target_y * target_y));
-            double x_add_on = 0;
-
-            /*
-              see if we're about to hit a car that's in front of us
-            */
-            /*
-            */      
-
-            //cout<< typeid(sensor_fusion[0]).name()<<endl;
-            //cout<< sensor_fusion[0][5]<<endl;
-            /*
-            double closest_dist = 6000.0;
-            int id_may_hit = 0;
-            for( int i =0; i < sensor_fusion.size();i++){
-                double car_curr_s = sensor_fusion[i][5];
-                if (car_curr_s - car_s> 0.0 && car_curr_s - car_s < closest_dist){
-                  closest_dist = car_curr_s - car_s;
-                  id_may_hit = i;
-                }
-            }
-
-            if(closest_dist < 10 && closest_dist > 0.0){
-              cout<< "Danger about to hit car " << id_may_hit << "\t" << closest_dist <<  endl;
-              //spacing += .005;
-            } else if (closest_dist > 10 && closest_dist > 0.0 && ref_vel >= .02){
-              //spacing -= .005;
-            }
-            */
+            double x_add_on = 0;   
 
             for( int i = 1; i <= 50 - previous_path_x.size(); i++){
 
