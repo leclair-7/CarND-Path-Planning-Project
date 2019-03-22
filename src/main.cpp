@@ -9,7 +9,6 @@
 #include <ctime>
 #include <typeinfo>
 
-#include "aux_path_plan.cpp"
 #include "Eigen-3.3/Eigen/Core"
 #include "Eigen-3.3/Eigen/QR"
 #include "json.hpp"
@@ -181,7 +180,9 @@ struct Position {
   double d;
 };
 
-
+/*
+    returns a vector (len=3) of positions of cars in each lane (position 0 is cars in lane 0, etc.)
+*/
 vector <vector <Position>> putPositionInlane(vector<Position> closer_than_60){
   vector <vector <Position>> lanes1_to_3;
 
@@ -214,6 +215,9 @@ vector <vector <Position>> putPositionInlane(vector<Position> closer_than_60){
   return lanes1_to_3;
 }
 
+/*
+    simple heuristic of which lane is safe to switch to
+*/
 bool isLaneSafe(vector<Position>alane, Position car_pos){
 
     double car_vel = car_pos.vel;
@@ -409,8 +413,6 @@ int main() {
             bool is_left_shift_safe  = false;
             bool is_right_shift_safe = false;
 
-            // this checks if the car is in our lane, and if so will it be too close with 30 meters of us
-            // input: (vector <vector <double>>sensorfusion, int prev_size, int & lane, long long & start)  
             for ( int i=0; i < sensor_fusion.size(); i++){
               float d = sensor_fusion[i][6];
 
@@ -424,11 +426,9 @@ int main() {
                 //if we're using previous points we can project the s out in time (next timestep)
                 check_car_s += ((double)prev_size * .02 * check_speed);
 
-                // is it in front of us such that we care
+                // is the external vehicle in front of us 
                 if (check_car_s > car_s && ((check_car_s - car_s)) < 30){
-                  //too_close = true; 
 
-                  //cout<< lane << "start: "<< start << endl;
                   // at this point, know we're almost in danger need to change lanes or slow down
                   
                   //the logic  (1st 3 ifs) we want to do is try to do then lane change, and if neither are safe
