@@ -178,6 +178,9 @@ struct Position {
 
   double s;
   double d;
+
+  double vx;
+  double vy;
 };
 
 /*
@@ -243,10 +246,9 @@ bool isLaneSafe(vector<Position>alane, Position car_pos){
   In each lane shift option, we'll define whether or not it is safe explicitly prior to running this functions
   to be on the safe side, isleftsafe and isrightsafe both start false
 */
-void laneShiftProcessing(int lane, bool & isleftsafe, bool & isrightsafe, vector<Position> closer_than_60, Position car_pos) {
+void laneShiftProcessing(int lane, bool & isleftsafe, bool & isrightsafe, vector<Position> car_npcs, Position car_pos) {
   // make positions lane 0,1,2 vectors
-  // 
-  vector <vector <Position>> allLanePositions = putPositionInlane(closer_than_60); 
+  vector <vector <Position>> allLanePositions = putPositionInlane(car_npcs); 
   vector <Position>lane0 = allLanePositions[0];
   vector <Position>lane1 = allLanePositions[1];
   vector <Position>lane2 = allLanePositions[2];
@@ -300,7 +302,6 @@ int main() {
 
   string line;
 
-  long long start = 0; 
   int lane = 1;
   double ref_vel = 0.0;
   double spacing = .02;         
@@ -328,7 +329,7 @@ int main() {
 
    
   
-  h.onMessage([&firstlanechange, &start, &map_waypoints_x,&map_waypoints_y,&map_waypoints_s,&map_waypoints_dx,&map_waypoints_dy, &lane, &ref_vel, &spacing](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
+  h.onMessage([&firstlanechange, &map_waypoints_x,&map_waypoints_y,&map_waypoints_s,&map_waypoints_dx,&map_waypoints_dy, &lane, &ref_vel, &spacing](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
                      uWS::OpCode opCode) {
     // "42" at the start of the message means there's a websocket message event.
     // The 4 signifies a websocket message
@@ -374,10 +375,10 @@ int main() {
           	vector <vector <double>> sensor_fusion = j[1]["sensor_fusion"];
 
             /* Some analysis
-                    Goal here is to get a list of the vehicles within 60m of us
+                    Goal here is to get a list of the vehicles within 40m of us
                     Wait, how close are they and how fast are they going for path planning we assume 0 accel on their part
              */
-            vector<Position> closer_than_60;
+            vector<Position> close_npc;
             for( int i=0; i < sensor_fusion.size(); i++){
                 
                 Position p;
@@ -386,14 +387,14 @@ int main() {
                 p.y   = sensor_fusion[i][2];
                 p.vel = sqrt(sensor_fusion[i][3] * sensor_fusion[i][3] + sensor_fusion[i][4] * sensor_fusion[i][4] );              
                 p.d = sensor_fusion[i][6];
+                p.vx = sensor_fusion[i][3];
+                p.vy = sensor_fusion[i][4];
                 double dist_to_us = distance(p.x, p.y, car_x, car_y);
-                if (dist_to_us < 40){
-                  closer_than_60.push_back(p);
-                } 
-                //cout<< "d of car id="<<p.id << " is " << p.d << endl;                 
-            }
 
-             	
+                if (dist_to_us < 40){
+                  close_npc.push_back(p);
+                }                        
+            }             	
 
             int prev_size = previous_path_x.size();
 
@@ -405,11 +406,7 @@ int main() {
               Below we check if we are too close to the car in front of us
             */
             bool too_close = false;
-            start += 1;
-
-            //https://stackoverflow.com/questions/1819189/what-range-of-values-can-integer-types-store-in-c
-            // yeah probably won't get an overflow; however, we never want one
-            if(start > 100000000) start -= 10000000;
+            
             bool is_left_shift_safe  = false;
             bool is_right_shift_safe = false;
 
@@ -434,50 +431,28 @@ int main() {
                   //the logic  (1st 3 ifs) we want to do is try to do then lane change, and if neither are safe
                   // then we'll decelerate until either it is safe to change lanes or to keep in lane
 
-                  laneShiftProcessing( lane, is_left_shift_safe, is_right_shift_safe, closer_than_60, car_pos );
+                  laneShiftProcessing(lane, is_left_shift_safe, is_right_shift_safe, close_npc, car_pos);
 
-                  // Caution below
-                  if (lane == 1 && (!firstlanechange || start > 70) && is_right_shift_safe){
-                    
-                    firstlanechange = true;
+                  if (is_left_shift_safe){
+                    lane -= 1;
+                  } else if (is_right_shift_safe){
+                    lane += 1;
+                  }
 
-                    //decide if lane 0 or lane 2 is safer then do the safer one
-                    lane = 2;                    
-                    start = 0;
-                  } else if (lane == 1 && (!firstlanechange || start > 35) && is_left_shift_safe){
-                    //decide if safe to change into lane 1
-                    firstlanechange = true;
-                    lane = 0;
-                    start = 0;
-                    //cout << "Got here variables not modified\n";
-                  }else if (lane == 2 && start > 35 && is_left_shift_safe){
-                    //decide if safe to change into lane 1
-                    lane = 1;
-                    start = 0;
-                    //cout << "Got here variables not modified\n";
-                  } else if (lane == 0 && start > 35 && is_right_shift_safe){
-                    //decide if safe to change into lane 1 (middle)
-                    lane = 1;
-                    start = 0;
-                    //cout << "Got here variables not modified\n";
-                  }  else{
-                    // if we're going faster than them
-                    if(car_speed > check_speed){
-                      ref_vel -= .7;                    
-                    } 
-                    /*
+                  if(car_speed > check_speed){
+                      ref_vel -= .3;                    
+                    }                    
                     else if( ref_vel < 49.5){
                       ref_vel += .224;
                     }
-                    */
-                  }
-                  //cout << lane << endl; 
-                }
+                    
+                  }                  
+                
               }//ends if car is in our lane
+              cout<< "NPC: " << close_npc.size() << endl;
 
             }
-            //cout<< "start  "<< start << "\t" << lane << endl;
-
+            
             if(ref_vel > 49.5){
               ref_vel -= .224;
              // cout<< "Decelerationg "<< lane << endl;
