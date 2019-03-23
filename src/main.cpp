@@ -219,6 +219,43 @@ vector <vector <Position>> putPositionInlane(vector<Position> closer_than_60){
 }
 
 /*
+  a naive prediction function 
+    - see where the car is in 10 steps
+    - simplest Process Model possible
+
+*/
+vector <Position> predictPositionofPosition( Position p){
+
+    //simulator defined
+    double delta_t = .02;
+
+    vector <Position> next_time_steps;  
+
+    next_time_steps.push_back(p);
+
+    Position p_prev = p;
+
+    for(int i=0; i < 10; i++){
+      Position p_next;
+      p_next.id = p.id;
+      p_next.x = p_prev.x + delta_t * p_prev.vx;
+      p_next.y = p_prev.y + delta_t * p_prev.vy;
+      p_next.vel = p_prev.vel;
+      //p_next.s = 5;
+      //p_next.d = 6;
+      p_next.vx = p_prev.vx;
+      p_next.vy = p_prev.vy;
+
+      p_prev = p_next;
+
+      next_time_steps.push_back(p_next);
+    }
+
+
+    return next_time_steps;
+}
+
+/*
     simple heuristic of which lane is safe to switch to
 */
 bool isLaneSafe(vector<Position>alane, Position car_pos){
@@ -227,6 +264,29 @@ bool isLaneSafe(vector<Position>alane, Position car_pos){
     double car_s   = car_pos.s;
     bool flag = true;
 
+    vector <Position> car_predictions = predictPositionofPosition( car_pos );
+
+    for(int i=0; i < alane.size(); i++){
+
+        // prediction of car at the next 10 timesteps
+        vector <Position> prediction_npc = predictPositionofPosition( alane[i] );        
+
+        for ( int k=0; k < prediction_npc.size(); k++){
+
+            double npc_x = prediction_npc[k].x;
+            double npc_y = prediction_npc[k].y;
+
+            double car_pred_x = car_predictions[k].x;
+            double car_pred_y = car_predictions[k].y;
+
+            double dist_from_npc = distance(npc_x, npc_y, car_pred_x, car_pred_y);
+
+            if ( dist_from_npc < 12){
+              return false;
+            }
+        }
+    }
+    /*
     for(int i=0; i < alane.size(); i++){
       // behind and faster
       if( (alane[i].s < car_s) && alane[i].vel > car_vel ){  
@@ -238,8 +298,9 @@ bool isLaneSafe(vector<Position>alane, Position car_pos){
         flag = false;         
       } 
     }
+    */
 
-    return flag;
+    return true;
 }
 
 /*
@@ -252,6 +313,7 @@ void laneShiftProcessing(int lane, bool & isleftsafe, bool & isrightsafe, vector
   vector <Position>lane0 = allLanePositions[0];
   vector <Position>lane1 = allLanePositions[1];
   vector <Position>lane2 = allLanePositions[2];
+
 
   double car_vel = car_pos.vel;
   double car_s   = car_pos.s;
@@ -327,9 +389,9 @@ int main() {
   	map_waypoints_dy.push_back(d_y);
   }
 
-   
+   int lane_change_timer =0;
   
-  h.onMessage([&firstlanechange, &map_waypoints_x,&map_waypoints_y,&map_waypoints_s,&map_waypoints_dx,&map_waypoints_dy, &lane, &ref_vel, &spacing](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
+  h.onMessage([&firstlanechange, &lane_change_timer, &map_waypoints_x,&map_waypoints_y,&map_waypoints_s,&map_waypoints_dx,&map_waypoints_dy, &lane, &ref_vel, &spacing](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
                      uWS::OpCode opCode) {
     // "42" at the start of the message means there's a websocket message event.
     // The 4 signifies a websocket message
@@ -364,6 +426,8 @@ int main() {
             car_pos.vel = car_speed;
             car_pos.s = car_s;
             car_pos.d = car_d;
+            car_pos.vx = car_speed * cos(car_yaw);
+            car_pos.vy = car_speed * sin(car_yaw);
 
           	// Previous path data given to the Planner
           	auto previous_path_x = j[1]["previous_path_x"];
@@ -409,7 +473,7 @@ int main() {
             
             bool is_left_shift_safe  = false;
             bool is_right_shift_safe = false;
-
+            lane_change_timer += 1;
             for ( int i=0; i < sensor_fusion.size(); i++){
               float d = sensor_fusion[i][6];
 
@@ -433,14 +497,21 @@ int main() {
 
                   laneShiftProcessing(lane, is_left_shift_safe, is_right_shift_safe, close_npc, car_pos);
 
-                  if (is_left_shift_safe){
+                  if (is_left_shift_safe && lane_change_timer > 300){
                     lane -= 1;
+                    lane_change_timer = 0;
                   } else if (is_right_shift_safe){
                     lane += 1;
+                    lane_change_timer = 0;
+
+                  } else {
+                    if(car_speed > check_speed){
+                      ref_vel -= .38;                    
+                    } 
                   }
 
                   if(car_speed > check_speed){
-                      ref_vel -= .3;                    
+                      ref_vel -= .2;                    
                     }                    
                     else if( ref_vel < 49.5){
                       ref_vel += .224;
