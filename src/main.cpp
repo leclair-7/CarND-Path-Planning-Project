@@ -235,7 +235,7 @@ vector <Position> predictPositionofPosition( Position p){
 
     Position p_prev = p;
 
-    for(int i=0; i < 10; i++){
+    for(int i=0; i < 100; i++){
       Position p_next;
       p_next.id = p.id;
       p_next.x = p_prev.x + delta_t * p_prev.vx;
@@ -256,7 +256,10 @@ vector <Position> predictPositionofPosition( Position p){
 }
 
 /*
-    simple heuristic of which lane is safe to switch to
+    input 1: external cars that are in a lane 
+    input 2: player car
+
+    return: if the lane with cars in the external cars vector is safe for lane changes 
 */
 bool isLaneSafe(vector<Position>alane, Position car_pos){
 
@@ -281,24 +284,12 @@ bool isLaneSafe(vector<Position>alane, Position car_pos){
 
             double dist_from_npc = distance(npc_x, npc_y, car_pred_x, car_pred_y);
 
-            if ( dist_from_npc < 12){
+            if ( dist_from_npc < 20){
               return false;
             }
         }
     }
-    /*
-    for(int i=0; i < alane.size(); i++){
-      // behind and faster
-      if( (alane[i].s < car_s) && alane[i].vel > car_vel ){  
-        flag = false;      
-      } 
-      
-      //in front and slower
-      if( (alane[i].s > car_s) && alane[i].vel < car_vel ){
-        flag = false;         
-      } 
-    }
-    */
+
 
     return true;
 }
@@ -324,9 +315,9 @@ void laneShiftProcessing(int lane, bool & isleftsafe, bool & isrightsafe, vector
   if (lane == 0){
     isleftsafe = false;
     // calculate if lane1 is safe
-    flag = isLaneSafe(lane1, car_pos);
+    isrightsafe = isLaneSafe(lane1, car_pos);
 
-    if (flag){ isrightsafe = true; }
+    //if (flag){ isrightsafe = true; }
 
     // see if there's a car in front within 60 going slower or behind us within x going faster  
   } else if (lane == 1){
@@ -339,8 +330,8 @@ void laneShiftProcessing(int lane, bool & isleftsafe, bool & isrightsafe, vector
   } else if (lane == 2){
     isrightsafe = false;
     // calculate if lane1 is safe
-    flag  = isLaneSafe(lane1, car_pos);
-    if (flag)  isleftsafe = true;
+    isleftsafe  = isLaneSafe(lane1, car_pos);
+    //if (flag)  isleftsafe = true;
   }
 
 }
@@ -455,7 +446,7 @@ int main() {
                 p.vy = sensor_fusion[i][4];
                 double dist_to_us = distance(p.x, p.y, car_x, car_y);
 
-                if (dist_to_us < 40){
+                if (dist_to_us < 50){
                   close_npc.push_back(p);
                 }                        
             }             	
@@ -497,36 +488,32 @@ int main() {
 
                   laneShiftProcessing(lane, is_left_shift_safe, is_right_shift_safe, close_npc, car_pos);
 
+                  //bool changed_vel = false;
                   if (is_left_shift_safe && lane_change_timer > 300){
                     lane -= 1;
                     lane_change_timer = 0;
-                  } else if (is_right_shift_safe){
+                  } else if (is_right_shift_safe && lane_change_timer > 300){
                     lane += 1;
-                    lane_change_timer = 0;
+                    lane_change_timer = 0;                  
+                  } 
 
-                  } else {
-                    if(car_speed > check_speed){
-                      ref_vel -= .38;                    
-                    } 
-                  }
-
-                  if(car_speed > check_speed){
-                      ref_vel -= .2;                    
+                  if(car_speed > check_speed  ){                      
+                    ref_vel -= .38;                    
                     }                    
                     else if( ref_vel < 49.5){
                       ref_vel += .224;
-                    }
-                    
+                    }                    
                   }                  
                 
               }//ends if car is in our lane
-              cout<< "NPC: " << close_npc.size() << endl;
+              cout<< "NPC: " << close_npc.size() <<  endl;
 
             }
             
+
+            //This is basically the cruise control
             if(ref_vel > 49.5){
               ref_vel -= .224;
-             // cout<< "Decelerationg "<< lane << endl;
             } else if( ref_vel < 49.5){
               ref_vel += .224;
             }
